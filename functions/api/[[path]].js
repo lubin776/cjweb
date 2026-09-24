@@ -17,7 +17,33 @@ function cleanEpisodes(playUrlStr) {
   const cleanedGroups = groups.map(group => {
     const episodes = group.split('#');
     const validEpisodes = episodes.filter(ep => {
-      const parts = ep.split('$');       const epName = parts[0] \vert{}\vert{} "";       const epUrl = parts[1] \vert{}\vert{} "";              const hasAdKeyword = AD_KEYWORDS.some(keyword => epName.includes(keyword));       const isInvalidUrl = !epUrl \vert{}\vert{} epUrl.includes('ads') \vert{}\vert{} epUrl.includes('banner');        return !hasAdKeyword && !isInvalidUrl;     });     return validEpisodes.join('#');   });      return cleanedGroups.filter(g => g.length > 0).join('$$$');
+      const parts = ep.split('$');
+      let epName = "";
+      let epUrl = "";
+      
+      if (parts.length > 0) {
+        epName = parts[0];
+      }
+      if (parts.length > 1) {
+        epUrl = parts[1];
+      }
+      
+      let hasAdKeyword = false;
+      for (let i = 0; i < AD_KEYWORDS.length; i++) {
+        if (epName.indexOf(AD_KEYWORDS[i]) !== -1) {
+          hasAdKeyword = true;
+          break;
+        }
+      }
+      
+      const isInvalidUrl = (!epUrl) || (epUrl.indexOf('ads') !== -1) || (epUrl.indexOf('banner') !== -1);
+
+      return (!hasAdKeyword) && (!isInvalidUrl);
+    });
+    return validEpisodes.join('#');
+  });
+  
+  return cleanedGroups.filter(function(g) { return g.length > 0; }).join('$$$');
 }
 
 function cleanVod(vod) {
@@ -28,17 +54,23 @@ function cleanVod(vod) {
   }
 
   if (vod.vod_remarks) {
-    AD_KEYWORDS.forEach(kw => {
-      if (vod.vod_remarks.includes(kw)) {
+    for (let i = 0; i < AD_KEYWORDS.length; i++) {
+      if (vod.vod_remarks.indexOf(AD_KEYWORDS[i]) !== -1) {
         vod.vod_remarks = "高清";
+        break;
       }
-    });
+    }
   }
 
   if (vod.vod_content) {
     let sentences = vod.vod_content.split(/[。！？\n]/);
-    let cleanSentences = sentences.filter(sent => {
-      return !AD_KEYWORDS.some(kw => sent.includes(kw));
+    let cleanSentences = sentences.filter(function(sent) {
+      for (let i = 0; i < AD_KEYWORDS.length; i++) {
+        if (sent.indexOf(AD_KEYWORDS[i]) !== -1) {
+          return false;
+        }
+      }
+      return true;
     });
     vod.vod_content = cleanSentences.join('。');
   }
@@ -47,12 +79,22 @@ function cleanVod(vod) {
 }
 
 export async function onRequest(context) {
-  const { request } = context;
+  const request = context.request;
   const url = new URL(request.url);
   const path = url.pathname;
   
-  const sourceKey = url.searchParams.get("source") || "feifan";
-  const targetApi = SOURCES.find(s => s.key === sourceKey)?.api || SOURCES[0].api;
+  let sourceKey = url.searchParams.get("source");
+  if (!sourceKey) {
+    sourceKey = "feifan";
+  }
+  
+  let targetApi = SOURCES[0].api;
+  for (let i = 0; i < SOURCES.length; i++) {
+    if (SOURCES[i].key === sourceKey) {
+      targetApi = SOURCES[i].api;
+      break;
+    }
+  }
 
   if (path.endsWith("/api/sources")) {
     return new Response(JSON.stringify(SOURCES), {
@@ -76,16 +118,21 @@ export async function onRequest(context) {
   }
 
   if (path.endsWith("/api/vod")) {
-    const ac = url.searchParams.get("ac") || "list";
-    const pg = url.searchParams.get("pg") || "1";
-    const wd = url.searchParams.get("wd") || "";
-    const t = url.searchParams.get("t") || "";
-    const ids = url.searchParams.get("ids") || "";
+    let ac = url.searchParams.get("ac");
+    if (!ac) ac = "list";
+    let pg = url.searchParams.get("pg");
+    if (!pg) pg = "1";
+    let wd = url.searchParams.get("wd");
+    if (!wd) wd = "";
+    let t = url.searchParams.get("t");
+    if (!t) t = "";
+    let ids = url.searchParams.get("ids");
+    if (!ids) ids = "";
 
-    let targetUrl = `${targetApi}?ac=${ac}&pg=${pg}`;
-    if (wd) targetUrl += `&wd=${encodeURIComponent(wd)}`;
-    if (t) targetUrl += `&t=${t}`;
-    if (ids) targetUrl += `&ids=${ids}`;
+    let targetUrl = targetApi + "?ac=" + ac + "&pg=" + pg;
+    if (wd) targetUrl = targetUrl + "&wd=" + encodeURIComponent(wd);
+    if (t) targetUrl = targetUrl + "&t=" + t;
+    if (ids) targetUrl = targetUrl + "&ids=" + ids;
 
     try {
       const response = await fetch(targetUrl, {
@@ -94,7 +141,9 @@ export async function onRequest(context) {
       let data = await response.json();
 
       if (data && data.list && Array.isArray(data.list)) {
-        data.list = data.list.map(vod => cleanVod(vod));
+        data.list = data.list.map(function(vod) {
+          return cleanVod(vod);
+        });
       }
 
       return new Response(JSON.stringify(data), {
