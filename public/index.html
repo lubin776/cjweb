@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web-TVBox 去广告版</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+      body { background-color: #0f172a; color: #f8fafc; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+    <!-- 顶部导航栏 -->
+    <header class="bg-slate-900/80 backdrop-blur border-b border-slate-800 sticky top-0 z-50 px-6 py-4 flex justify-between items-center">
+        <div class="flex items-center space-x-4">
+            <h1 class="text-xl font-bold text-indigo-400 cursor-pointer" onclick="loadHome()">📺 Web-TVBox <span class="text-xs bg-indigo-900 text-indigo-300 px-2 py-0.5 rounded ml-2">去广告版</span></h1>
+            <select id="sourceSelect" onchange="changeSource()" class="bg-slate-800 border border-slate-700 text-sm rounded px-3 py-1.5 focus:outline-none cursor-pointer">
+            </select>
+        </div>
+        <div class="flex items-center space-x-2">
+            <input type="text" id="searchInput" placeholder="输入影片名称..." onkeydown="if(event.key==='Enter') handleSearch()" class="bg-slate-800 border border-slate-700 text-sm rounded px-3 py-1.5 focus:outline-none w-48 sm:w-64">
+            <button onclick="handleSearch()" class="bg-indigo-600 hover:bg-indigo-500 text-sm px-4 py-1.5 rounded transition cursor-pointer">搜索</button>
+        </div>
+    </header>
+
+    <!-- 主体内容区 -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-6">
+        <!-- 视频列表视图 -->
+        <div id="homeView">
+            <div id="classTabs" class="flex flex-wrap gap-2 mb-6"></div>
+            <div id="vodGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4"></div>
+        </div>
+
+        <!-- 播放详情视图 -->
+        <div id="detailView" class="hidden space-y-6">
+            <button onclick="backToHome()" class="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded text-sm transition cursor-pointer">← 返回列表</button>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="aspect-video bg-black rounded-xl overflow-hidden relative shadow-lg">
+                        <video id="videoPlayer" class="w-full h-full" controls></video>
+                    </div>
+                    <div id="vodTitle" class="text-xl font-bold"></div>
+                    <div id="vodDesc" class="text-sm text-slate-400 leading-relaxed"></div>
+                </div>
+                <div class="bg-slate-900/50 border border-slate-800 p-4 rounded-xl space-y-4">
+                    <h3 class="font-bold text-slate-300 border-b border-slate-800 pb-2">播放线路 / 选集（已自动过滤广告）</h3>
+                    <div id="vodPlayList" class="flex flex-wrap gap-2 max-h-[500px] overflow-y-auto pr-1"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentSource = 'feifan';
+        let currentClass = '';
+
+        async function init() {
+            await loadSources();
+            await loadHome();
+        }
+
+        async function loadSources() {
+            try {
+                const res = await fetch('/api/sources');
+                const sources = await res.json();
+                const select = document.getElementById('sourceSelect');
+                select.innerHTML = sources.map(s => `<option value="${s.key}">${s.name}</option>`).join('');
+                currentSource = sources[0].key;
+            } catch (e) {
+                console.error("加载源失败", e);
+            }
+        }
+
+        async function changeSource() {
+            currentSource = document.getElementById('sourceSelect').value;
+            currentClass = '';
+            await loadHome();
+        }
+
+        async function loadHome() {
+            document.getElementById('homeView').classList.remove('hidden');
+            document.getElementById('detailView').classList.add('hidden');
+            
+            try {
+                const res = await fetch(`/api/vod?source=${currentSource}&t=${currentClass}`);
+                const data = await res.json();
+                
+                if (data.class) {
+                    const tabs = document.getElementById('classTabs');
+                    tabs.innerHTML = `<button onclick="filterClass('')" class="px-3 py-1 rounded text-sm cursor-pointer ${!currentClass ? 'bg-indigo-600' : 'bg-slate-800 hover:bg-slate-700'}">全部</button>` +
+                        data.class.map(c => `<button onclick="filterClass('${c.type_id}')" class="px-3 py-1 rounded text-sm cursor-pointer ${currentClass == c.type_id ? 'bg-indigo-600' : 'bg-slate-800 hover:bg-slate-700'}">${c.type_name}</button>`).join('');
+                }
+                
+                renderVodList(data.list || []);
+            } catch (e) {
+                console.error("获取影视数据失败", e);
+            }
+        }
+
+        function filterClass(classId) {
+            currentClass = classId;
+            loadHome();
+        }
+
+        function renderVodList(list) {
+            const grid = document.getElementById('vodGrid');
+            if (!list.length) {
+                grid.innerHTML = `<div class="col-span-full text-center text-slate-500 py-12">暂无数据</div>`;
+                return;
+            }
+            grid.innerHTML = list.map(vod => `
+                <div onclick="loadDetail('${vod.vod_id}')" class="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden cursor-pointer hover:border-indigo-500 transition group">
+                    <div class="aspect-[3/4] bg-slate-800 relative overflow-hidden">
+                        <img src="/api/image?url=${encodeURIComponent(vod.vod_pic)}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" loading="lazy">
+                        <span class="absolute bottom-1 right-1 bg-black/70 text-xs px-1.5 py-0.5 rounded text-indigo-300">${vod.vod_remarks || ''}</span>
+                    </div>
+                    <div class="p-3">
+                        <h4 class="text-sm font-medium truncate">${vod.vod_name}</h4>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function handleSearch() {
+            const wd = document.getElementById('searchInput').value;
+            if (!wd) return;
+            try {
+                const res = await fetch(`/api/vod?source=${currentSource}&wd=${encodeURIComponent(wd)}`);
+                const data = await res.json();
+                document.getElementById('homeView').classList.remove('hidden');
+                document.getElementById('detailView').classList.add('hidden');
+                renderVodList(data.list || []);
+            } catch (e) {
+                console.error("搜索失败", e);
+            }
+        }
+
+        async function loadDetail(vodId) {
+            try {
+                const res = await fetch(`/api/vod?source=${currentSource}&ac=detail&ids=${vodId}`);
+                const data = await res.json();
+                if (!data.list || !data.list.length) return;
+                const vod = data.list[0];
+                
+                document.getElementById('homeView').classList.add('hidden');
+                document.getElementById('detailView').classList.remove('hidden');
+                
+                document.getElementById('vodTitle').innerText = vod.vod_name;
+                document.getElementById('vodDesc').innerHTML = vod.vod_content ? vod.vod_content.replace(/<[^>]+>/g, '') : '暂无简介';
+
+                const playUrls = vod.vod_play_url ? vod.vod_play_url.split('$$$')[0] : '';
+                const episodes = playUrls ? playUrls.split('#').map(ep => {
+                    const parts = ep.split('$');
+                    return { name: parts[0], url: parts[1] };
+                }) : [];
+
+                const playListEl = document.getElementById('vodPlayList');
+                if (!episodes.length) {
+                    playListEl.innerHTML = `<div class="text-xs text-slate-500">无可播放剧集或广告已被全部过滤</div>`;
+                    return;
+                }
+
+                playListEl.innerHTML = episodes.map((ep) => `
+                    <button onclick="playVideo('${ep.url}', this)" class="ep-btn bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-xs transition border border-slate-700 cursor-pointer">${ep.name}</button>
+                `).join('');
+
+                if (episodes.length > 0) {
+                    playListEl.firstChild.click();
+                }
+            } catch (e) {
+                console.error("加载详情失败", e);
+            }
+        }
+
+        function playVideo(url, btn) {
+            document.querySelectorAll('.ep-btn').forEach(b => {
+                b.classList.remove('bg-indigo-600', 'border-indigo-500');
+                b.classList.add('bg-slate-800');
+            });
+            if(btn) {
+                btn.classList.remove('bg-slate-800');
+                btn.classList.add('bg-indigo-600', 'border-indigo-500');
+            }
+
+            const video = document.getElementById('videoPlayer');
+            if (Hls.isSupported() && url.includes('.m3u8')) {
+                if (window.hlsInstance) {
+                    window.hlsInstance.destroy();
+                }
+                const hls = new Hls();
+                window.hlsInstance = hls;
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+            } else {
+                video.src = url;
+                video.play();
+            }
+        }
+
+        function backToHome() {
+            document.getElementById('homeView').classList.remove('hidden');
+            document.getElementById('detailView').classList.add('hidden');
+            const video = document.getElementById('videoPlayer');
+            video.pause();
+            video.src = "";
+            if (window.hlsInstance) {
+                window.hlsInstance.destroy();
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
